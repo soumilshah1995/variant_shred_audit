@@ -18,7 +18,20 @@ pip install pyarrow
 
 For `--table` mode: **PySpark 4.x**, **Java 17+**, Iceberg 1.11+ Spark runtime.
 
-## Quick start — Coverage report (no Spark)
+## Quick start — Full report (recommended)
+
+Use `--full` for all sections (A/B/C/D) including no-benefit path sampling:
+
+```bash
+python3 variant_shred_audit.py \
+  --parquet-dir /path/to/warehouse/demo/my_table/data \
+  --variant-col v \
+  --full
+```
+
+`--full` auto-discovers a JSON source for Section D via `VARIANT_SHRED_JSON_FILE` or `github_archive.json.gz` near the table/warehouse.
+
+## Quick start — Parquet only (sections A/B/C)
 
 Point at your Iceberg table `data/` directory:
 
@@ -82,8 +95,20 @@ python3 variant_shred_audit.py \
 |---------|-------------------|
 | **A** | Spec summary — FULL vs PARTIAL vs NOT SHREDDED counts |
 | **B** | Per-path ROW FULL %, SPEC status, QUERY benefit |
-| **B2** | Optional sampled list of unshredded paths (`--scan-rows N`) |
-| **C** | Which `variant_get` paths to use in hot queries |
+| **B2** | Sampled list of unshredded paths (`--full` or `--scan-rows`) |
+| **C** | Paths that **benefit** from shredding (HIGH / MEDIUM / LOW) |
+| **D** | Paths with **no benefit** (not shredded — full binary parse) |
+
+## Cursor skill
+
+Install for Agent chat: copy `.cursor/skills/variant-shred-coverage/` to `~/.cursor/skills/`, or use it from this repo.
+
+```
+@variant-shred-coverage
+Run report on /path/to/warehouse/demo/my_table/data
+```
+
+The skill always runs with `--full`.
 
 ## Accuracy
 
@@ -108,6 +133,8 @@ ALTER TABLE my_table SET TBLPROPERTIES (
 | `ICEBERG_WAREHOUSE` | Warehouse URI |
 | `ICEBERG_CATALOG` | Catalog name (default: `dev`) |
 | `ICEBERG_PACKAGES` | Iceberg Spark runtime Maven coords |
+| `VARIANT_SHRED_JSON_FILE` | JSON/JSON.GZ source for Section D sampling |
+| `VARIANT_SHRED_AUDIT_SCRIPT` | Override path to `variant_shred_audit.py` |
 
 ## License
 

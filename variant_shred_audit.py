@@ -31,6 +31,8 @@ DEFAULT_CATALOG_CLASS = "org.apache.iceberg.spark.SparkCatalog"
 ENV_WAREHOUSE = "ICEBERG_WAREHOUSE"
 ENV_CATALOG = "ICEBERG_CATALOG"
 ENV_PACKAGES = "ICEBERG_PACKAGES"
+ENV_JSON = "VARIANT_SHRED_JSON_FILE"
+DEFAULT_SCAN_ROWS = 10000
 
 
 @dataclass
@@ -226,6 +228,11 @@ Examples:
         help="Sample N rows for B2 unshredded path frequency (optional)",
     )
     p.add_argument("--json-file", help="JSON/JSON.GZ source for B2 (with --scan-rows, no Spark)")
+    p.add_argument(
+        "--full",
+        action="store_true",
+        help="Full report: all Parquet files + Section D row sampling (auto-finds --json-file)",
+    )
 
     spark_grp = p.add_argument_group("Spark / Iceberg (for --table mode)")
     spark_grp.add_argument(
@@ -494,6 +501,82 @@ def scan_table_paths(
     return counts, len(rows)
 
 
+def discover_json_file(explicit: str | None, parquet_dir: str | None) -> str | None:
+    """Find a JSON/JSON.GZ source file for Section D path sampling."""
+    if explicit:
+        path = Path(explicit).expanduser().resolve()
+        if path.is_file():
+            return str(path)
+        raise SystemExit(f"JSON file not found: {path}")
+
+    env = os.environ.get(ENV_JSON)
+    if env:
+        path = Path(env).expanduser().resolve()
+        if path.is_file():
+            return str(path)
+
+    search_roots: list[Path] = []
+    if parquet_dir:
+        data = Path(parquet_dir).expanduser().resolve()
+        search_roots.extend([data.parent, data.parent.parent, data.parent.parent.parent])
+    search_roots.extend(
+        [
+            Path.cwd(),
+            Path.home() / "IdeaProjects/study-learn/iceberg",
+            Path.home() / "IdeaProjects/study-learn",
+            Path.home() / "IdeaProjects/study-learn/tmp",
+        ]
+    )
+
+    study = Path.home() / "IdeaProjects/study-learn"
+    if study.is_dir():
+        for candidate in sorted(study.glob("**/github_archive.json.gz"))[:10]:
+            if candidate.is_file():
+                return str(candidate)
+
+    seen: set[Path] = set()
+    names = (
+        "github_archive.json.gz",
+        "github_archive.json",
+        "source.json.gz",
+        "source.json",
+        "data.json.gz",
+        "data.json",
+    )
+    for root in search_roots:
+        root = root.resolve()
+        if root in seen or not root.is_dir():
+            continue
+        seen.add(root)
+        for name in names:
+            candidate = root / name
+            if candidate.is_file():
+                return str(candidate)
+        for candidate in sorted(root.glob("*.json.gz"))[:5]:
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+def resolve_row_scan(
+    args: argparse.Namespace, parquet_dir: str | None
+) -> tuple[str | None, int]:
+    """Apply --full defaults and auto-discover JSON for Section D."""
+    json_file = args.json_file
+    scan_rows = args.scan_rows
+
+    if args.full:
+        if scan_rows <= 0:
+            scan_rows = DEFAULT_SCAN_ROWS
+        if not json_file:
+            json_file = discover_json_file(None, parquet_dir)
+
+    if json_file and scan_rows <= 0:
+        scan_rows = DEFAULT_SCAN_ROWS
+
+    return json_file, scan_rows
+
+
 def path_is_covered_by_shredded(json_path: str, shredded: set[str]) -> bool:
     if json_path in shredded:
         return True
@@ -709,35 +792,67 @@ def print_query_benefit_report(
 
     print()
     print("=" * 110)
-    print("C — QUERY BENEFIT SUMMARY (which filters/projections win)")
+    print("C — PATHS THAT BENEFIT FROM SHREDDING (use in variant_get filters)")
     print("=" * 110)
-    print(f"  HIGH benefit ({len(high)} paths) — use these in WHERE / SELECT (typed_value + stats skipping):")
-    for q in high[:15]:
-        print(f"    • variant_get({variant_col}, '$.{q.path}', ...)  [{q.row_full_pct:.0f}% row FULL, {q.file_coverage_pct:.0f}% files]")
-    if len(high) > 15:
-        print(f"    ... +{len(high)-15} more")
+    print(f"  HIGH ({len(high)} paths) — typed_value column + stats skipping:")
+    if high:
+        for q in high:
+            print(
+                f"    • variant_get({variant_col}, '$.{q.path}', ...)  "
+                f"[{q.row_full_pct:.0f}% row FULL, {q.file_coverage_pct:.0f}% files]"
+            )
+    else:
+        print("    (none)")
 
     if medium:
-        print(f"\n  MEDIUM benefit ({len(medium)} paths) — column exists, partial fallback or not all files:")
-        for q in medium[:8]:
-            print(f"    • $.{q.path}  (FULL {q.row_full_pct:.0f}%, files {q.file_coverage_pct:.0f}%)")
+        print(f"\n  MEDIUM ({len(medium)} paths) — shredded, minor binary fallback:")
+        for q in medium:
+            print(
+                f"    • variant_get({variant_col}, '$.{q.path}', ...)  "
+                f"[FULL {q.row_full_pct:.0f}%, files {q.file_coverage_pct:.0f}%]"
+            )
 
-    if partial_paths:
-        print(f"\n  LOW benefit ({len(low)} paths) — shredded column but heavy binary fallback:")
+    if low:
+        print(f"\n  LOW ({len(low)} paths) — shredded column exists, heavy binary fallback:")
         for q in low:
-            print(f"    • $.{q.path}  ({q.row_partial_pct:.1f}% rows still in field.value binary)")
+            print(
+                f"    • variant_get({variant_col}, '$.{q.path}', ...)  "
+                f"[{q.row_partial_pct:.1f}% rows still in field.value binary]"
+            )
 
+    print()
+    print("=" * 110)
+    print("D — PATHS WITH NO BENEFIT (not shredded — reads full variant binary)")
+    print("=" * 110)
     if unshredded:
-        top = unshredded[:5]
-        print(f"\n  NO benefit ({len(unshredded)}+ paths) — NOT SHREDDED, must parse variant binary:")
-        for path, count, pct in top:
-            print(f"    • $.{path}  ({pct:.1f}% of sampled rows)")
+        print(
+            f"  {len(unshredded)} distinct JSON paths have no typed_value column "
+            f"(sample {data_rows_scanned:,} rows):"
+        )
+        print(f"  {'JSON PATH':<55} {'ROWS':>8} {'FREQ %':>8}")
+        print("  " + "-" * 75)
+        show = unshredded if len(unshredded) <= 100 else unshredded[:100]
+        for path, count, pct in show:
+            print(f"  {path:<55} {count:>8,} {pct:>7.1f}%")
+        if len(unshredded) > 100:
+            print(f"  ... and {len(unshredded) - 100} more unshredded paths")
+    else:
+        print("  Parquet metadata alone cannot list unshredded JSON paths.")
+        print("  Re-run with row sampling to populate this section:")
+        print("    --scan-rows 10000 --json-file /path/to/source.json[.gz]")
+        print("  Or use --table mode with Spark and --scan-rows.")
+        nested = aggregate_nested_partials(table, variant_col)
+        heavy = [(label, partial_rows, pct) for label, partial_rows, pct in nested if pct >= 5.0]
+        if heavy:
+            print()
+            print("  Parent objects with leftover binary (unshredded subpaths likely live here):")
+            for label, partial_rows, pct in heavy:
+                print(f"    • $.{label}  ({pct:.1f}% rows still have object.value binary)")
 
     print()
     print("  Rule of thumb:")
-    print("    HIGH   → filter/project on this path; Iceberg/Parquet can skip row groups")
-    print("    NONE   → variant_get still works logically, but reads full variant binary")
-    print("    Prefer HIGH paths for dashboard filters; avoid NONE paths in hot queries")
+    print("    Section C → paths shredding helps; use HIGH first in hot queries")
+    print("    Section D → paths shredding does not help; variant_get parses full binary")
 
 
 def is_unshredded_table(table: TableAudit, variant_col: str) -> bool:
@@ -986,10 +1101,19 @@ def main() -> None:
     pq = import_pyarrow()
     spark_config = build_spark_config(args)
 
+    parquet_dir = args.parquet_dir or args.with_shred_dir
+    json_file, scan_rows = resolve_row_scan(args, parquet_dir)
+
     data_counts: Counter[str] | None = None
     data_rows_scanned = 0
-    if args.json_file and args.scan_rows:
-        data_counts, data_rows_scanned = scan_json_file(args.json_file, args.scan_rows)
+    if json_file and scan_rows:
+        print(f"# Section D sampling: {scan_rows:,} rows from {json_file}", file=sys.stderr)
+        data_counts, data_rows_scanned = scan_json_file(json_file, scan_rows)
+    elif args.full and not json_file:
+        print(
+            "# Section D: no JSON source found — set --json-file or VARIANT_SHRED_JSON_FILE",
+            file=sys.stderr,
+        )
 
     if args.no_shred_dir and args.with_shred_dir:
         no_table = audit_table(pq, "NO SHREDDING", args.no_shred_dir, args.variant_col, args.max_files)
@@ -1009,9 +1133,9 @@ def main() -> None:
         return
 
     if args.table:
-        if args.scan_rows and not data_counts:
+        if scan_rows and not data_counts:
             data_counts, data_rows_scanned = scan_table_paths(
-                args.table, args.variant_col, spark_config, args.scan_rows
+                args.table, args.variant_col, spark_config, scan_rows
             )
         file_list, total_available = discover_via_spark(
             args.table, spark_config, args.max_files
