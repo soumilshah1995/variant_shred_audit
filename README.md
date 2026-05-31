@@ -9,7 +9,6 @@ Based on the [Parquet Variant Shredding spec](https://github.com/apache/parquet-
 | File | Purpose |
 |------|---------|
 | `variant_shred_audit.py` | **Coverage report** — FULL / PARTIAL / query benefit (HIGH/MEDIUM/LOW/NONE) |
-| `variant_shred_coverage.sh` | spark-submit wrapper for `--table` mode |
 | `github_variant_shred_benchmark.py` | Write benchmark — shred on vs off timing |
 
 ## Requirements
@@ -57,14 +56,6 @@ export ICEBERG_WAREHOUSE=file:///path/to/warehouse
 export ICEBERG_PACKAGES=org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0
 export ICEBERG_CATALOG=dev
 
-./variant_shred_coverage.sh \
-  --table dev.demo.my_table \
-  --variant-col v
-```
-
-Or raw spark-submit:
-
-```bash
 spark-submit \
   --packages org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0 \
   --conf spark.sql.catalog.dev=org.apache.iceberg.spark.SparkCatalog \

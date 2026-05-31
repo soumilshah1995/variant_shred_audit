@@ -6,7 +6,7 @@ Modes:
   1) Parquet dir (no Spark):  --parquet-dir /path/to/table/data
   2) Iceberg table + Spark:   --table catalog.ns.table --warehouse file:///wh
   3) spark-submit (recommended for --table): pass Spark/Iceberg conf via spark-submit,
-     then add --use-existing-spark (see tools/variant_shred_coverage.sh)
+     then add --use-existing-spark
 
 Sections A/B/C use Parquet metadata + column statistics (NOT row sampling).
 Section B2 (--scan-rows) is optional and sampled.
@@ -195,7 +195,7 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
   # Parquet files only (no Spark):
-  python3 tools/variant_shred_audit.py --parquet-dir /path/to/table/data --variant-col v
+  python3 variant_shred_audit.py --parquet-dir /path/to/table/data --variant-col v
 
   # spark-submit (configure Spark/Iceberg externally):
   spark-submit --packages org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0 \\
@@ -203,9 +203,7 @@ Examples:
     --conf spark.sql.catalog.dev.type=hadoop \\
     --conf spark.sql.catalog.dev.warehouse=file:///path/to/warehouse \\
     --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \\
-    tools/variant_shred_audit.py --use-existing-spark --table dev.demo.my_table --variant-col v
-
-  # Or use the wrapper: tools/variant_shred_coverage.sh --table dev.demo.my_table
+    variant_shred_audit.py --use-existing-spark --table dev.demo.my_table --variant-col v
         """,
     )
     target = p.add_argument_group("target (pick one)")
