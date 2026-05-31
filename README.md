@@ -9,7 +9,6 @@ Based on the [Parquet Variant Shredding spec](https://github.com/apache/parquet-
 | File | Purpose |
 |------|---------|
 | `variant_shred_audit.py` | **Coverage report** — FULL / PARTIAL / query benefit (HIGH/MEDIUM/LOW/NONE) |
-| `github_variant_shred_benchmark.py` | Write benchmark — shred on vs off timing |
 
 ## Requirements
 
@@ -17,7 +16,7 @@ Based on the [Parquet Variant Shredding spec](https://github.com/apache/parquet-
 pip install pyarrow
 ```
 
-For `--table` mode or the benchmark: **PySpark 4.x**, **Java 17+**, Iceberg 1.11+ Spark runtime.
+For `--table` mode: **PySpark 4.x**, **Java 17+**, Iceberg 1.11+ Spark runtime.
 
 ## Quick start — Coverage report (no Spark)
 
@@ -74,34 +73,6 @@ spark-submit \
 python3 variant_shred_audit.py \
   --no-shred-dir /path/to/github_no_shredding/data \
   --with-shred-dir /path/to/github_with_shredding/data \
-  --variant-col v
-```
-
-## Write benchmark (GitHub archive)
-
-Creates two tables and compares write time with shredding on vs off:
-
-```bash
-export ICEBERG_WAREHOUSE=file:///path/to/warehouse
-
-python3 github_variant_shred_benchmark.py /path/to/github_archive.json.gz
-```
-
-Options:
-
-```bash
-python3 github_variant_shred_benchmark.py data.json.gz \
-  --warehouse file:///tmp/wh \
-  --catalog dev \
-  --runs 10 \
-  --buffer-size 10000
-```
-
-Then audit the shredded table:
-
-```bash
-python3 variant_shred_audit.py \
-  --parquet-dir /path/to/warehouse/demo/github_with_shredding/data \
   --variant-col v
 ```
 
